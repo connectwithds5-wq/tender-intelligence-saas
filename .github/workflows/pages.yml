@@ -24,13 +24,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Fetch latest public tender snapshot
+        run: npx tsx src/ingestion/publish-static.ts
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      - name: Prepare static dashboard
+        run: node scripts/prepare-pages.mjs
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
       - name: Upload dashboard
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
-          path: ./public
+          path: ./.pages
 
       - name: Deploy to GitHub Pages
         id: deployment
