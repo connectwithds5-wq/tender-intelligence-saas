@@ -33,12 +33,27 @@ create table if not exists public.fetch_runs (
   status text not null default 'running', error text
 );
 
+create table if not exists public.tender_document_analyses (
+  id uuid primary key default gen_random_uuid(),
+  tender_id text not null references public.tenders(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  document_url text not null,
+  status text not null check (status in ('analyzed','failed')),
+  extracted_text text not null default '',
+  analysis jsonb not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(tender_id, user_id)
+);
+create index if not exists tender_document_analyses_user_idx on public.tender_document_analyses (user_id, updated_at desc);
+
 alter table public.business_profiles enable row level security;
 alter table public.tenders enable row level security;
 alter table public.tender_matches enable row level security;
 alter table public.fetch_runs enable row level security;
+alter table public.tender_document_analyses enable row level security;
 
--- Customer data: only the authenticated owner can access their profiles and matches.
+-- Customer data: only the authenticated owner can access their profiles and analyses.
 drop policy if exists "profile_owner_select" on public.business_profiles;
 drop policy if exists "profile_owner_insert" on public.business_profiles;
 drop policy if exists "profile_owner_update" on public.business_profiles;
@@ -52,10 +67,20 @@ drop policy if exists "match_owner_select" on public.tender_matches;
 create policy "match_owner_select" on public.tender_matches for select to authenticated
   using (exists (select 1 from public.business_profiles p where p.id = profile_id and p.user_id = (select auth.uid())));
 
--- Tenders are system-ingested and stay server-only for now. The service role performs ingestion.
+drop policy if exists "document_analysis_owner_select" on public.tender_document_analyses;
+create policy "document_analysis_owner_select" on public.tender_document_analyses for select to authenticated
+  using ((select auth.uid()) = user_id);
+
+drop policy if exists "document_analysis_owner_delete" on public.tender_document_analyses;
+create policy "document_analysis_owner_delete" on public.tender_document_analyses for delete to authenticated
+  using ((select auth.uid()) = user_id);
+
+-- Tenders and fetch runs are system-managed and server-only. Service role performs ingestion and analysis writes.
 revoke all on table public.tenders from anon, authenticated;
 revoke all on table public.fetch_runs from anon, authenticated;
 revoke all on table public.business_profiles from anon;
 revoke all on table public.tender_matches from anon;
+revoke all on table public.tender_document_analyses from anon;
 grant select, insert, update, delete on table public.business_profiles to authenticated;
 grant select on table public.tender_matches to authenticated;
+grant select, delete on table public.tender_document_analyses to authenticated;
