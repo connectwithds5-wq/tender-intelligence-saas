@@ -1,6 +1,6 @@
 {
   "name": "tender-intelligence-saas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "AI-powered tender intelligence SaaS for Indian businesses.",
   "type": "module",
@@ -10,10 +10,9 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
-  "engines": {
-    "node": ">=20"
-  },
+  "engines": { "node": ">=20" },
   "dependencies": {
+    "@supabase/supabase-js": "^2.57.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
