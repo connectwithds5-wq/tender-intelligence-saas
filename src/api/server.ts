@@ -8,6 +8,9 @@ import { BusinessProfileInputSchema, BusinessProfileSchema, TenderSchema, type B
 import { matchTender } from "../core/matcher.js";
 import { analyzeEligibility } from "../core/eligibility.js";
 import { analyzeDocumentRequest } from "./document-analysis.js";
+import { analyzeTenderText } from "../core/document-analysis.js";
+import { extractPdfText } from "../core/pdf-extraction.js";
+import { getDocumentAnalysis, saveDocumentAnalysis } from "../db/document-analyses.js";
 import { fetchConfiguredFeed } from "../ingestion/generic-json.js";
 import { fetchCpppTenders } from "../ingestion/cppp.js";
 import { getSupabase, hasDatabase } from "../db/supabase.js";
@@ -17,6 +20,8 @@ import { createBusinessProfile, deleteBusinessProfile, getBusinessProfile, listB
 const here = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(here, "../../public");
 const memory: { tenders: Tender[]; profiles: BusinessProfile[] } = { tenders: [], profiles: [] };
+const MAX_PDF_BYTES = 12 * 1024 * 1024;
+
 function json(res: ServerResponse, status: number, body: unknown) { res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify(body)); }
 async function body(req: IncomingMessage): Promise<unknown> { const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk)); if (!chunks.length) return {}; return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
 function bearer(req: IncomingMessage) { const value = req.headers.authorization; return value?.startsWith("Bearer ") ? value.slice(7).trim() : null; }
@@ -24,12 +29,57 @@ async function currentUser(req: IncomingMessage) { const token = bearer(req); co
 function requireIngestionKey(req: IncomingMessage) { const configured = process.env.INGESTION_API_KEY; return Boolean(configured && req.headers["x-ingestion-key"] === configured); }
 async function listTenders(): Promise<Tender[]> { const db = getSupabase(); if (!db) return memory.tenders; const { data, error } = await db.from("tenders").select("*").order("closing_at", { ascending: true }).limit(100); if (error) throw error; return (data ?? []).map((row: any) => TenderSchema.parse({ ...row, referenceNumber: row.reference_number, estimatedValue: row.estimated_value == null ? undefined : Number(row.estimated_value), emdAmount: row.emd_amount == null ? undefined : Number(row.emd_amount), publishedAt: row.published_at ?? undefined, closingAt: row.closing_at ?? undefined, sourceUrl: row.source_url, documentUrl: row.document_url ?? undefined })); }
 async function createProfile(input: unknown, userId?: string): Promise<BusinessProfile> { const parsed = BusinessProfileInputSchema.parse(input); const profile = BusinessProfileSchema.parse({ ...parsed, id: randomUUID() }); const db = getSupabase(); if (!db) { memory.profiles.push(profile); return profile; } if (!userId) throw new Error("Authentication required"); return createBusinessProfile(profile, userId); }
+
+async function downloadTenderPdf(documentUrl: string): Promise<Buffer> {
+  let parsed: URL;
+  try { parsed = new URL(documentUrl); } catch { throw new Error("Tender document URL is invalid"); }
+  if (parsed.protocol !== "https:") throw new Error("Tender document must be served over HTTPS");
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1" || hostname.endsWith(".local")) {
+    throw new Error("Tender document URL is not allowed");
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(parsed, { signal: controller.signal, redirect: "manual", headers: { accept: "application/pdf,application/octet-stream;q=0.8" } });
+    if (response.status < 200 || response.status >= 300) throw new Error(`Tender document returned HTTP ${response.status}`);
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    const length = Number(response.headers.get("content-length") ?? 0);
+    if (length > MAX_PDF_BYTES) throw new Error("Tender PDF exceeds the 12MB analysis limit");
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > MAX_PDF_BYTES) throw new Error("Tender PDF exceeds the 12MB analysis limit");
+    if (!contentType.includes("pdf") && bytes.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("Tender document is not a PDF");
+    return bytes;
+  } finally { clearTimeout(timer); }
+}
+
 export function startServer(port = Number(process.env.PORT ?? 3000)) { const server = createServer(async (req, res) => { try { const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 if (req.method === "GET" && url.pathname === "/api/health") return json(res, 200, { ok: true, database: hasDatabase(), auth: Boolean(process.env.SUPABASE_ANON_KEY), ingestionAuth: Boolean(process.env.INGESTION_API_KEY), service: "tender-intelligence-saas" });
 if (req.method === "POST" && url.pathname === "/api/auth/signup") { const auth = authClient(); if (!auth) return json(res, 503, { error: "Supabase Auth is not configured" }); const input = await body(req) as { email?: string; password?: string }; const { data, error } = await auth.auth.signUp({ email: input.email ?? "", password: input.password ?? "" }); if (error) return json(res, 400, { error: error.message }); return json(res, 201, { user: data.user, session: data.session }); }
 if (req.method === "POST" && url.pathname === "/api/auth/signin") { const auth = authClient(); if (!auth) return json(res, 503, { error: "Supabase Auth is not configured" }); const input = await body(req) as { email?: string; password?: string }; const { data, error } = await auth.auth.signInWithPassword({ email: input.email ?? "", password: input.password ?? "" }); if (error) return json(res, 401, { error: error.message }); return json(res, 200, { user: data.user, session: data.session }); }
 if (req.method === "GET" && url.pathname === "/api/auth/me") { const user = await currentUser(req); return user ? json(res, 200, { user: { id: user.id, email: user.email } }) : json(res, 401, { error: "Unauthorized" }); }
 if (req.method === "POST" && url.pathname === "/api/analyze-document") { const user = hasDatabase() ? await currentUser(req) : null; if (hasDatabase() && !user) return json(res, 401, { error: "Login required" }); return json(res, 200, await analyzeDocumentRequest(req)); }
+if (req.method === "POST" && /^\/api\/tenders\/[^/]+\/analyze$/.test(url.pathname)) {
+  const user = hasDatabase() ? await currentUser(req) : null;
+  if (hasDatabase() && !user) return json(res, 401, { error: "Login required" });
+  const tenderId = decodeURIComponent(url.pathname.split("/")[3] ?? "");
+  const tender = (await listTenders()).find((item) => item.id === tenderId);
+  if (!tender) return json(res, 404, { error: "Tender not found" });
+  if (!tender.documentUrl) return json(res, 422, { error: "This tender has no document URL" });
+  if (!user && hasDatabase()) return json(res, 401, { error: "Login required" });
+  const pdf = await downloadTenderPdf(tender.documentUrl);
+  const extractedText = await extractPdfText(pdf);
+  const analysis = analyzeTenderText(extractedText);
+  if (user) await saveDocumentAnalysis({ tenderId, userId: user.id, documentUrl: tender.documentUrl, status: "analyzed", extractedText, analysis });
+  return json(res, 200, { tenderId, title: tender.title, analysis, extractedTextLength: extractedText.length, saved: Boolean(user) });
+}
+if (req.method === "GET" && /^\/api\/tenders\/[^/]+\/analysis$/.test(url.pathname)) {
+  const user = hasDatabase() ? await currentUser(req) : null;
+  if (hasDatabase() && !user) return json(res, 401, { error: "Login required" });
+  const tenderId = decodeURIComponent(url.pathname.split("/")[3] ?? "");
+  const analysis = user ? await getDocumentAnalysis(tenderId, user.id) : null;
+  return analysis ? json(res, 200, { analysis }) : json(res, 404, { error: "No analysis found for this tender" });
+}
 if (req.method === "GET" && url.pathname === "/api/tenders") { const tenders = await listTenders(); return json(res, 200, { count: tenders.length, tenders }); }
 if (req.method === "GET" && url.pathname === "/api/profiles") { const user = hasDatabase() ? await currentUser(req) : null; if (hasDatabase() && !user) return json(res, 401, { error: "Login required" }); return json(res, 200, { profiles: user ? await listBusinessProfiles(user.id) : memory.profiles }); }
 if (req.method === "POST" && url.pathname === "/api/profiles") { const user = hasDatabase() ? await currentUser(req) : null; if (hasDatabase() && !user) return json(res, 401, { error: "Login required" }); return json(res, 201, await createProfile(await body(req), user?.id)); }
