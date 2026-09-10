@@ -35,9 +35,7 @@ async function downloadTenderPdf(documentUrl: string): Promise<Buffer> {
   try { parsed = new URL(documentUrl); } catch { throw new Error("Tender document URL is invalid"); }
   if (parsed.protocol !== "https:") throw new Error("Tender document must be served over HTTPS");
   const hostname = parsed.hostname.toLowerCase();
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1" || hostname.endsWith(".local")) {
-    throw new Error("Tender document URL is not allowed");
-  }
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1" || hostname.endsWith(".local")) throw new Error("Tender document URL is not allowed");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20_000);
   try {
@@ -66,12 +64,20 @@ if (req.method === "POST" && /^\/api\/tenders\/[^/]+\/analyze$/.test(url.pathnam
   const tender = (await listTenders()).find((item) => item.id === tenderId);
   if (!tender) return json(res, 404, { error: "Tender not found" });
   if (!tender.documentUrl) return json(res, 422, { error: "This tender has no document URL" });
-  if (!user && hasDatabase()) return json(res, 401, { error: "Login required" });
   const pdf = await downloadTenderPdf(tender.documentUrl);
   const extractedText = await extractPdfText(pdf);
   const analysis = analyzeTenderText(extractedText);
+  const profileId = url.searchParams.get("profileId");
+  let match = undefined;
+  let eligibility = undefined;
+  if (profileId) {
+    const profile = user ? await getBusinessProfile(profileId, user.id) : memory.profiles.find((item) => item.id === profileId) ?? null;
+    if (!profile) return json(res, 404, { error: "Profile not found" });
+    match = matchTender(tender, profile);
+    eligibility = analyzeEligibility(tender, profile);
+  }
   if (user) await saveDocumentAnalysis({ tenderId, userId: user.id, documentUrl: tender.documentUrl, status: "analyzed", extractedText, analysis });
-  return json(res, 200, { tenderId, title: tender.title, analysis, extractedTextLength: extractedText.length, saved: Boolean(user) });
+  return json(res, 200, { tenderId, title: tender.title, analysis, match, eligibility, extractedTextLength: extractedText.length, saved: Boolean(user) });
 }
 if (req.method === "GET" && /^\/api\/tenders\/[^/]+\/analysis$/.test(url.pathname)) {
   const user = hasDatabase() ? await currentUser(req) : null;
