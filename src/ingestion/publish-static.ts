@@ -23,11 +23,28 @@ const errors = [
   ...(nicResult.status === "fulfilled" ? nicResult.value.errors : []),
   nprocureResult.status === "rejected" ? `nProcure: ${String(nprocureResult.reason)}` : undefined,
 ].filter(Boolean) as string[];
-if (cppp.length === 0 && gem.length === 0 && nic.length === 0 && nprocure.length === 0) throw new Error(`No public tenders could be fetched. ${errors.join(" | ")}`);
 const tenders = [...cppp, ...gem, ...nic, ...nprocure];
-await upsertTenders(tenders);
+
 await mkdir(outputDir, { recursive: true });
+
+// Never block the dashboard deployment just because a public portal is temporarily
+// unavailable. If this run returns no fresh records, publish an empty snapshot with
+// source errors so the UI remains usable and the failure is observable.
+if (tenders.length > 0) {
+  await upsertTenders(tenders);
+}
+
 const sourceCounts: Record<string, number> = {};
 for (const tender of tenders) sourceCounts[tender.source] = (sourceCounts[tender.source] ?? 0) + 1;
-await writeFile(join(outputDir, "tenders.json"), JSON.stringify({ sources: Object.keys(sourceCounts), fetchedAt: new Date().toISOString(), count: tenders.length, sourceCounts, errors, tenders }, null, 2));
+
+const snapshot = {
+  sources: Object.keys(sourceCounts),
+  fetchedAt: new Date().toISOString(),
+  count: tenders.length,
+  sourceCounts,
+  errors,
+  status: tenders.length > 0 ? "partial_or_complete" : "no_fresh_data",
+  tenders,
+};
+await writeFile(join(outputDir, "tenders.json"), JSON.stringify(snapshot, null, 2));
 console.log(JSON.stringify({ fetched: tenders.length, sourceCounts, errors, output: "public/data/tenders.json" }, null, 2));
