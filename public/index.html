@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tender Intelligence</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;background:#f5f7fb;color:#172033}header{background:#111827;color:white;padding:24px 6vw}main{max-width:1100px;margin:28px auto;padding:0 20px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}.card{background:white;border:1px solid #e5e7eb;border-radius:14px;padding:18px;box-shadow:0 3px 12px #0000000b}.score{font-size:28px;font-weight:800}.badge{display:inline-block;padding:5px 9px;border-radius:999px;background:#eef2ff}.muted{color:#667085}button{padding:10px 14px;border:0;border-radius:9px;background:#111827;color:white;cursor:pointer}a{color:#2563eb}.error{color:#b42318}
+</style></head>
+<body><header><strong>Tender Intelligence</strong><div class="muted" style="color:#cbd5e1">Find tenders worth bidding on — not just tender alerts.</div></header>
+<main><div class="card"><h2>Live tender feed</h2><p id="status" class="muted">Loading…</p><button onclick="load()">Refresh</button></div><h2>Latest tenders</h2><div id="list" class="grid"></div></main>
+<script>
+async function load(){const s=document.querySelector('#status'),l=document.querySelector('#list');try{const r=await fetch('/api/tenders');const d=await r.json();s.textContent=`${d.count} tenders available`;l.innerHTML=d.tenders.map(t=>`<article class="card"><span class="badge">${t.category||'General'}</span><h3>${esc(t.title)}</h3><p class="muted">${esc(t.buyer||'Buyer unavailable')} · ${esc(t.location||'India')}</p><p>${t.estimatedValue?'₹'+Number(t.estimatedValue).toLocaleString('en-IN'):'Value not published'}</p><p>Closes: ${t.closingAt?new Date(t.closingAt).toLocaleString('en-IN'):'Not specified'}</p><a href="${esc(t.sourceUrl)}" target="_blank" rel="noreferrer">Open tender →</a></article>`).join('')||'<div class="card">No tenders yet. Configure TENDER_FEED_URL and call POST /api/fetch.</div>'}catch(e){s.innerHTML='<span class="error">API unavailable</span>'}}function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}load();
+</script></body></html>
