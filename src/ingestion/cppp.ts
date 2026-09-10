@@ -1,5 +1,8 @@
 import { TenderSchema, type Tender } from "../domain/tender.js";
 
+// CPPP's current public eProcurement landing page exposes the latest-tenders
+// table reliably; the older ePublishing endpoint can intermittently return 500.
+export const CPPP_EPROCURE_URL = "https://eprocure.gov.in/eprocure/app";
 export const CPPP_E_PUBLISH_URL = "https://eprocure.gov.in/epublish/app?service=home";
 
 function clean(value: string): string {
@@ -7,7 +10,12 @@ function clean(value: string): string {
 }
 
 function stripHtml(value: string): string {
-  return clean(value.replace(/<[^>]*>/g, " ").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"'));
+  return clean(value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&nbsp;/gi, " "));
 }
 
 function parseDate(value: string): string | undefined {
@@ -23,19 +31,7 @@ function parseDate(value: string): string | undefined {
   return new Date(Date.UTC(Number(year), monthIndex, Number(day), hour, Number(minute))).toISOString();
 }
 
-/**
- * Parses the public CPPP ePublishing latest-tenders table.
- * It intentionally consumes only public HTML and does not bypass authentication,
- * CAPTCHA, rate limits or other technical controls.
- */
-export async function fetchCpppTenders(): Promise<Tender[]> {
-  const response = await fetch(CPPP_E_PUBLISH_URL, {
-    headers: { accept: "text/html", "user-agent": "TenderIntelligenceSaaS/0.1 (+public-tender-indexer)" },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw new Error(`CPPP returned HTTP ${response.status}`);
-  const html = await response.text();
-
+function parseLatestTenders(html: string): Tender[] {
   const rows = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]
     .map((m) => m[1])
     .map((row) => [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((cell) => stripHtml(cell[1])))
@@ -48,17 +44,33 @@ export async function fetchCpppTenders(): Promise<Tender[]> {
     if (!title || !referenceNumber || !closingAt) continue;
     const closing = parseDate(closingAt);
     const bidOpening = parseDate(bidOpeningAt ?? "");
-    const id = `cppp:${referenceNumber}`;
+    if (!closing) continue;
     tenders.push(TenderSchema.parse({
-      id,
+      id: `cppp:${referenceNumber}`,
       referenceNumber,
       title,
-      source: "CPPP ePublishing",
-      sourceUrl: CPPP_E_PUBLISH_URL,
+      source: "CPPP eProcurement",
+      sourceUrl: CPPP_EPROCURE_URL,
       closingAt: closing,
-      raw: { source: "cppp-epublish", bidOpeningAt: bidOpening, fetchedAt: new Date().toISOString() },
+      raw: { source: "cppp-eprocure", bidOpeningAt: bidOpening, fetchedAt: new Date().toISOString() },
       keywords: [],
     }));
   }
   return [...new Map(tenders.map((t) => [t.id, t])).values()];
+}
+
+/**
+ * Reads only the public CPPP latest-tenders table. No CAPTCHA, authentication,
+ * rate-limit or other technical-control bypass is attempted.
+ */
+export async function fetchCpppTenders(): Promise<Tender[]> {
+  const response = await fetch(CPPP_EPROCURE_URL, {
+    headers: { accept: "text/html", "user-agent": "TenderIntelligenceSaaS/0.1 (+public-tender-indexer)" },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new Error(`CPPP returned HTTP ${response.status}`);
+  const html = await response.text();
+  const tenders = parseLatestTenders(html);
+  if (tenders.length === 0) throw new Error("CPPP latest-tenders table contained no parseable tenders");
+  return tenders;
 }
