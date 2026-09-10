@@ -37,14 +37,9 @@ function extractBidNumber(text: string): string | undefined {
   return text.match(/GEM\/\d{4}\/B\/\d+/i)?.[0].toUpperCase();
 }
 
-function extractDate(text: string, label: string): string | undefined {
-  const pattern = new RegExp(`${label}[^\\d]{0,80}(\\d{2}[-/]\\d{2}[-/]\\d{4}[^<]{0,30})`, "i");
-  return toIso(text.match(pattern)?.[1]);
-}
-
 function extractRows(html: string): Tender[] {
   const tenders: Tender[] = [];
-  const rowMatches = html.match(/<tr[\\s\\S]*?<\\/tr>/gi) ?? [];
+  const rowMatches = html.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
 
   for (const row of rowMatches) {
     const text = decodeHtml(row);
@@ -54,7 +49,7 @@ function extractRows(html: string): Tender[] {
     const links = [...row.matchAll(/href=["']([^"']*(?:showbidDocument|bidding)[^"']*)["']/gi)].map((m) => absoluteUrl(m[1]));
     const sourceUrl = links.find((url) => /showbidDocument|bidding/i.test(url)) ?? `${GEM_BASE_URL}/all-bids`;
 
-    const cells = [...row.matchAll(/<td[^>]*>([\\s\\S]*?)<\\/td>/gi)].map((m) => decodeHtml(m[1]));
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => decodeHtml(m[1]));
     const description = cells.find((cell) => !/GEM\/\d{4}\/B\/\d+/i.test(cell) && cell.length > 15) ?? text;
     const dates = [...text.matchAll(/\d{2}[-/]\d{2}[-/]\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)?/gi)].map((m) => m[0]);
 
