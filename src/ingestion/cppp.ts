@@ -1,8 +1,18 @@
 import { TenderSchema, type Tender } from "../domain/tender.js";
 
-// CPPP's public eProcurement landing page exposes a latest-tenders table.
-// We consume only that public HTML and do not bypass CAPTCHA/authentication.
-export const CPPP_EPROCURE_URL = "https://eprocure.gov.in/eprocure/app";
+// CPPP exposes the same public latest-tenders data through a few public routes.
+// Some runners receive intermittent 5xx responses from one hostname/route, so
+// try the public mirrors/routes in sequence. No CAPTCHA/authentication bypass.
+export const CPPP_EPROCURE_URL = "https://www.eprocure.gov.in/eprocure/app";
+const CPPP_ENDPOINTS = [
+  "https://www.eprocure.gov.in/eprocure/app",
+  "https://www.eprocure.gov.in/eprocure/app?page=Front",
+  "https://www.eprocure.gov.in/eprocure/app?page=Frontend",
+  "https://eprocure.gov.in/eprocure/app?page=Front",
+  "https://eprocure.gov.in/eprocure/app?page=Frontend",
+  "https://www.eprocure.gov.in/epublish/app?service=home",
+  "https://eprocure.gov.in/epublish/app?service=home",
+] as const;
 
 function clean(value: string): string {
   return value.replace(/\s+/g, " ").replace(/&nbsp;/gi, " ").trim();
@@ -40,7 +50,7 @@ function looksLikeReference(value: string): boolean {
   return value.length >= 4 && !/^\d+$/.test(value) && /[A-Za-z]/.test(value) && /\d/.test(value);
 }
 
-function parseLatestTenders(html: string): Tender[] {
+function parseLatestTenders(html: string, sourceUrl: string): Tender[] {
   const rows = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)]
     .map((m) => [...m[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((cell) => stripHtml(cell[1])))
     .filter((cells) => cells.length >= 3);
@@ -50,9 +60,6 @@ function parseLatestTenders(html: string): Tender[] {
     const rowText = cells.join(" | ");
     if (/tender title|latest tenders|corrigendum title/i.test(rowText)) continue;
 
-    // Current CPPP markup includes a serial-number cell before title/reference.
-    // Find the date cells first, then infer reference/title around them instead
-    // of relying on a brittle fixed column position.
     const closingIndex = cells.findIndex(isDateCell);
     if (closingIndex < 0) continue;
     const closingAt = parseDate(cells[closingIndex]);
@@ -60,7 +67,6 @@ function parseLatestTenders(html: string): Tender[] {
 
     const bidOpeningAt = cells.slice(closingIndex + 1).find(isDateCell);
     const bidOpening = bidOpeningAt ? parseDate(bidOpeningAt) : undefined;
-
     const beforeDates = cells.slice(0, closingIndex).filter(Boolean);
     const referenceIndex = beforeDates.findIndex(looksLikeReference);
     if (referenceIndex < 0) continue;
@@ -77,9 +83,9 @@ function parseLatestTenders(html: string): Tender[] {
       referenceNumber,
       title,
       source: "CPPP eProcurement",
-      sourceUrl: CPPP_EPROCURE_URL,
+      sourceUrl,
       closingAt,
-      raw: { source: "cppp-eprocure", bidOpeningAt: bidOpening, fetchedAt: new Date().toISOString() },
+      raw: { source: "cppp-public", bidOpeningAt: bidOpening, fetchedAt: new Date().toISOString() },
       keywords: [],
     }));
   }
@@ -88,13 +94,30 @@ function parseLatestTenders(html: string): Tender[] {
 }
 
 export async function fetchCpppTenders(): Promise<Tender[]> {
-  const response = await fetch(CPPP_EPROCURE_URL, {
-    headers: { accept: "text/html,application/xhtml+xml", "user-agent": "TenderIntelligenceSaaS/0.1 (+public-tender-indexer)" },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw new Error(`CPPP returned HTTP ${response.status}`);
-  const html = await response.text();
-  const tenders = parseLatestTenders(html);
-  if (tenders.length === 0) throw new Error("CPPP latest-tenders table contained no parseable tenders");
-  return tenders;
+  const errors: string[] = [];
+
+  for (const url of CPPP_ENDPOINTS) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          accept: "text/html,application/xhtml+xml",
+          "user-agent": "TenderIntelligenceSaaS/0.1 (+public-tender-indexer)",
+        },
+        redirect: "follow",
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!response.ok) {
+        errors.push(`${url}: HTTP ${response.status}`);
+        continue;
+      }
+      const html = await response.text();
+      const tenders = parseLatestTenders(html, url);
+      if (tenders.length > 0) return tenders;
+      errors.push(`${url}: no parseable latest-tender rows`);
+    } catch (error) {
+      errors.push(`${url}: ${String(error)}`);
+    }
+  }
+
+  throw new Error(`CPPP public feed unavailable across ${CPPP_ENDPOINTS.length} endpoints: ${errors.join(" | ")}`);
 }
