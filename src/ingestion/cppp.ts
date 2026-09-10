@@ -76,7 +76,7 @@ function parseLatestTenders(html: string, sourceUrl: string): Tender[] {
     const dateIndexes = cells.map((cell, index) => isDateCell(cell) ? index : -1).filter((index) => index >= 0);
     if (dateIndexes.length < 2) continue;
 
-    // The new public CPPP table is: Sl.No | published | closing | opening | title/ref/id | org | corrigendum.
+    // The new public CPPP table is: Sl.No | published | closing | opening | title/ref/id | organisation | corrigendum.
     const isNewPublicTable = dateIndexes.length >= 3;
     const closingIndex = isNewPublicTable ? dateIndexes[1] : dateIndexes[0];
     const openingIndex = isNewPublicTable ? dateIndexes[2] : dateIndexes[1];
@@ -110,7 +110,7 @@ function parseLatestTenders(html: string, sourceUrl: string): Tender[] {
       id: `cppp:${referenceNumber}`,
       referenceNumber,
       title,
-      buyer: isNewPublicTable ? cells[openingIndex + 1] : undefined,
+      buyer: isNewPublicTable ? cells[openingIndex + 2] : undefined,
       source: "CPPP eProcurement",
       sourceUrl: detailUrl,
       closingAt,
