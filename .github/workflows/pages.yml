@@ -36,6 +36,7 @@ jobs:
         run: npm run build
 
       - name: Fetch latest public tender snapshot
+        continue-on-error: true
         run: npx tsx src/ingestion/publish-static.ts
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
