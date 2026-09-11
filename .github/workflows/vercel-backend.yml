@@ -29,4 +29,6 @@ jobs:
             exit 0
           fi
           npm install --global vercel@latest
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
           vercel deploy --prod --yes --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID"
