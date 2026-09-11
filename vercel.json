@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "functions": {
+    "api/analyze-tender.js": { "maxDuration": 60, "memory": 1024 }
+  },
+  "rewrites": [
+    { "source": "/api/analyze-tender", "destination": "/api/analyze-tender.js" }
+  ]
+}
