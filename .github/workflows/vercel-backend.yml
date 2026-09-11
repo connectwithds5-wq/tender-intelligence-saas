@@ -1,0 +1,27 @@
+name: Deploy analysis API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "package.json"
+      - "vercel.json"
+      - ".github/workflows/vercel-backend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_ORG_ID != '' && secrets.VERCEL_PROJECT_ID != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: amondnet/vercel-action@v42
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: --prod
