@@ -47,11 +47,42 @@ create table if not exists public.tender_document_analyses (
 );
 create index if not exists tender_document_analyses_user_idx on public.tender_document_analyses (user_id, updated_at desc);
 
+create table if not exists public.subscriptions (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  stripe_customer_id text unique,
+  stripe_subscription_id text unique,
+  plan text not null default 'trial' check (plan in ('trial','pro','business')),
+  status text not null default 'trialing' check (status in ('trialing','active','past_due','canceled','unpaid','incomplete','incomplete_expired','paused','none')),
+  trial_started_at timestamptz not null default now(),
+  trial_ends_at timestamptz not null default (now() + interval '24 hours'),
+  current_period_start timestamptz,
+  current_period_end timestamptz,
+  cancel_at_period_end boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists subscriptions_status_idx on public.subscriptions (status);
+create index if not exists subscriptions_trial_ends_idx on public.subscriptions (trial_ends_at);
+
+create table if not exists public.usage (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  period_start date not null,
+  tender_views integer not null default 0,
+  analyses integer not null default 0,
+  saved_searches integer not null default 0,
+  alerts integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, period_start)
+);
+
 alter table public.business_profiles enable row level security;
 alter table public.tenders enable row level security;
 alter table public.tender_matches enable row level security;
 alter table public.fetch_runs enable row level security;
 alter table public.tender_document_analyses enable row level security;
+alter table public.subscriptions enable row level security;
+alter table public.usage enable row level security;
 
 -- Customer data: only the authenticated owner can access their profiles and analyses.
 drop policy if exists "profile_owner_select" on public.business_profiles;
@@ -68,19 +99,25 @@ create policy "match_owner_select" on public.tender_matches for select to authen
   using (exists (select 1 from public.business_profiles p where p.id = profile_id and p.user_id = (select auth.uid())));
 
 drop policy if exists "document_analysis_owner_select" on public.tender_document_analyses;
-create policy "document_analysis_owner_select" on public.tender_document_analyses for select to authenticated
-  using ((select auth.uid()) = user_id);
-
 drop policy if exists "document_analysis_owner_delete" on public.tender_document_analyses;
-create policy "document_analysis_owner_delete" on public.tender_document_analyses for delete to authenticated
-  using ((select auth.uid()) = user_id);
+create policy "document_analysis_owner_select" on public.tender_document_analyses for select to authenticated using ((select auth.uid()) = user_id);
+create policy "document_analysis_owner_delete" on public.tender_document_analyses for delete to authenticated using ((select auth.uid()) = user_id);
 
--- Tenders and fetch runs are system-managed and server-only. Service role performs ingestion and analysis writes.
+drop policy if exists "subscription_owner_select" on public.subscriptions;
+create policy "subscription_owner_select" on public.subscriptions for select to authenticated using ((select auth.uid()) = user_id);
+drop policy if exists "usage_owner_select" on public.usage;
+create policy "usage_owner_select" on public.usage for select to authenticated using ((select auth.uid()) = user_id);
+
+-- Tenders, fetch runs, billing writes, and usage writes are server-managed.
 revoke all on table public.tenders from anon, authenticated;
 revoke all on table public.fetch_runs from anon, authenticated;
+revoke all on table public.subscriptions from anon, authenticated;
+revoke all on table public.usage from anon, authenticated;
 revoke all on table public.business_profiles from anon;
 revoke all on table public.tender_matches from anon;
 revoke all on table public.tender_document_analyses from anon;
 grant select, insert, update, delete on table public.business_profiles to authenticated;
 grant select on table public.tender_matches to authenticated;
 grant select, delete on table public.tender_document_analyses to authenticated;
+grant select on table public.subscriptions to authenticated;
+grant select on table public.usage to authenticated;
