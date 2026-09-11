@@ -19,32 +19,6 @@
     } catch (_) {}
   }
 
-  async function signInOrSignUp() {
-    const existing = localStorage.getItem("ti_access_token");
-    if (existing) return existing;
-    const email = window.prompt("Tender Intelligence login email:");
-    if (!email) return null;
-    const password = window.prompt("Tender Intelligence password:");
-    if (!password) return null;
-    const post = async (path) => {
-      const response = await fetch(apiBase + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || `Authentication failed (HTTP ${response.status})`);
-      return data;
-    };
-    try {
-      const data = await post("/api/auth-signin");
-      localStorage.setItem("ti_access_token", data.session.access_token);
-      return data.session.access_token;
-    } catch (error) {
-      if (!window.confirm("Sign-in failed. Create a new Tender Intelligence account with this email?")) throw error;
-      const data = await post("/api/auth-signup");
-      if (!data.session?.access_token) throw new Error("Account created. Confirm the email if Supabase email confirmation is enabled, then sign in again.");
-      localStorage.setItem("ti_access_token", data.session.access_token);
-      return data.session.access_token;
-    }
-  }
-
   function findTenderFromCard(card) {
     const title = card?.querySelector(".tTitle")?.textContent?.trim();
     if (!title) return null;
@@ -54,13 +28,10 @@
   function renderLiveResult(result) {
     const a = result.analysis || {};
     const e = a.eligibility || {};
-    const m = result.match;
-    const el = result.eligibility;
     const evidence = (a.evidence || []).map((x) => `<li><b>${escHtml(x.requirement)}:</b> ${escHtml(x.value)} <span style="color:#667085">(${Math.round((x.confidence || 0) * 100)}%)</span></li>`).join("") || "<li>No standard evidence was confidently extracted.</li>";
     const warnings = (a.warnings || []).map((x) => `<li>${escHtml(x)}</li>`).join("");
-    const matchHtml = m ? `<div class="staticAnalysisSection"><h3>Match & eligibility</h3><div class="staticAnalysisGrid"><div class="staticAnalysisMetric"><b>Match</b><span>${escHtml(m.score)}/100</span></div><div class="staticAnalysisMetric"><b>Recommendation</b><span>${escHtml(m.recommendation)}</span></div><div class="staticAnalysisMetric"><b>Pre-screen</b><span>${escHtml(el?.recommendation || "REVIEW")}</span></div></div></div>` : "";
     const warningHtml = warnings ? `<div class="staticAnalysisSection"><h3>Warnings</h3><ul>${warnings}</ul></div>` : "";
-    show(result.title || "Tender Analysis", `<div class="staticAnalysisSection"><h3>Eligibility evidence</h3><ul>${evidence}</ul></div>${matchHtml}${warningHtml}<div class="staticAnalysisSection"><h3>Extracted fields</h3><ul><li>Turnover: ${escHtml(e.turnover || "Not found")}</li><li>Experience: ${escHtml(e.experience || "Not found")}</li><li>EMD: ${escHtml(e.emd || "Not found")}</li><li>Deadline: ${escHtml(e.deadline || "Not found")}</li><li>Certifications: ${escHtml((e.certifications || []).join(", ") || "Not found")}</li></ul></div><div class="staticAnalysisSection"><div class="staticAnalysisWarn">${escHtml(a.disclaimer || "Verify every requirement against the original tender document.")}</div></div>`);
+    show(result.title || "Tender Analysis", `<div class="staticAnalysisSection"><h3>Eligibility evidence</h3><ul>${evidence}</ul></div><div class="staticAnalysisSection"><h3>Extracted fields</h3><ul><li>Turnover: ${escHtml(e.turnover || "Not found")}</li><li>Experience: ${escHtml(e.experience || "Not found")}</li><li>EMD: ${escHtml(e.emd || "Not found")}</li><li>Deadline: ${escHtml(e.deadline || "Not found")}</li><li>Certifications: ${escHtml((e.certifications || []).join(", ") || "Not found")}</li></ul></div>${warningHtml}<div class="staticAnalysisSection"><div class="staticAnalysisWarn">${escHtml(a.disclaimer || "Verify every requirement against the original tender document.")}</div></div>`);
   }
 
   async function analyzeTender(button, event) {
@@ -70,12 +41,8 @@
     if (!apiBase) return message("Backend not configured", "The dashboard is live, but TENDER_API_BASE_URL is not configured yet. Deploy the Vercel API and set the Pages repository secret TENDER_API_BASE_URL to its production URL.");
     show(tender.title, '<div class="loading">Analyzing the tender document securely…</div>');
     try {
-      const token = await signInOrSignUp();
-      if (!token) return message(tender.title, "Login is required before document analysis.");
-      const profileId = document.querySelector("#profile")?.value || "";
-      const response = await fetch(apiBase + "/api/analyze-tender", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ tenderId: tender.id, profileId: profileId || undefined }) });
+      const response = await fetch(apiBase + "/api/analyze-tender", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tenderId: tender.id, title: tender.title, documentUrl: tender.documentUrl || undefined, sourceUrl: tender.sourceUrl || undefined }) });
       const data = await response.json().catch(() => ({}));
-      if (response.status === 401) { localStorage.removeItem("ti_access_token"); return message(tender.title, "Your session expired. Click Analyze Tender again to sign in."); }
       if (!response.ok) return message(tender.title, data.error || `Analysis failed (HTTP ${response.status}).`);
       renderLiveResult(data);
     } catch (error) {
