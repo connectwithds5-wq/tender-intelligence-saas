@@ -1,15 +1,25 @@
 (() => {
   "use strict";
-  let apiBase = "";
+  let apiBases = [];
   const tokenKey = "ti_access_token";
   const esc = v => String(v ?? "").replace(/[&<>\"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
   const token = () => localStorage.getItem(tokenKey) || "";
   const saveToken = t => t ? localStorage.setItem(tokenKey, t) : localStorage.removeItem(tokenKey);
   async function json(path, options = {}) {
-    const r = await fetch(apiBase + path, { ...options, headers: { "content-type": "application/json", ...(options.headers || {}), ...(token() ? { authorization: "Bearer " + token() } : {}) } });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) { const e = new Error(d.error || `Request failed (HTTP ${r.status})`); e.data = d; e.status = r.status; throw e; }
-    return d;
+    let lastError = null;
+    for (const base of apiBases) {
+      try {
+        const r = await fetch(base + path, { ...options, headers: { "content-type": "application/json", ...(options.headers || {}), ...(token() ? { authorization: "Bearer " + token() } : {}) } });
+        const d = await r.json().catch(() => ({}));
+        if (r.status === 403 || r.status === 404) { lastError = new Error(d.error || `Backend unavailable (HTTP ${r.status})`); continue; }
+        if (!r.ok) { const e = new Error(d.error || `Request failed (HTTP ${r.status})`); e.data = d; e.status = r.status; throw e; }
+        return d;
+      } catch (error) {
+        if (error?.status === 401 || error?.status === 400 || error?.status === 402) throw error;
+        lastError = error;
+      }
+    }
+    throw lastError || new Error("Authentication backend is unavailable. Please try again shortly.");
   }
   function modal() {
     if (document.querySelector("#tiAccountModal")) return document.querySelector("#tiAccountModal");
@@ -28,8 +38,17 @@
     m.querySelector("#tiToggleMode").textContent = signup ? "Already have an account? Sign in" : "New business? Start your 24-hour free trial";
     m.querySelector("#tiAccountNotice").style.display = "none";
   }
-  async function loadConfig() { try { const r = await fetch("./data/runtime-config.json?ts=" + Date.now(), {cache:"no-store"}); if (r.ok) apiBase = (await r.json()).apiBaseUrl || ""; } catch (_) {} }
-  async function status() { if (!token() || !apiBase) return null; try { return await json("/api/billing-status", {method:"GET"}); } catch (_) { return null; } }
+  async function loadConfig() {
+    try {
+      const r = await fetch("./data/runtime-config.json?ts=" + Date.now(), {cache:"no-store"});
+      if (r.ok) {
+        const config = await r.json();
+        apiBases = [...new Set([...(config.apiBaseUrls || []), config.apiBaseUrl].filter(Boolean))];
+      }
+    } catch (_) {}
+    if (!apiBases.length) apiBases = ["https://tender-intelligence-saas-mrul.vercel.app", "https://tender-intelligence-saas.vercel.app"];
+  }
+  async function status() { if (!token() || !apiBases.length) return null; try { return await json("/api/billing-status", {method:"GET"}); } catch (_) { return null; } }
   function formatRemaining(iso) { if (!iso) return ""; const ms = new Date(iso).getTime() - Date.now(); if (ms <= 0) return "Trial ended"; const h = Math.floor(ms / 3600000); const min = Math.floor((ms % 3600000) / 60000); return `${h}h ${min}m remaining`; }
   function mountAccountBadge(info) {
     let badge = document.querySelector("#tiAccountBadge"); if (!badge) { badge = document.createElement("div"); badge.id = "tiAccountBadge"; badge.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:50;background:#fff;border:1px solid #dfe4eb;border-radius:12px;box-shadow:0 8px 30px rgba(16,24,40,.12);padding:10px 12px;min-width:205px;font-size:10px"; document.body.appendChild(badge); }
