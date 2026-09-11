@@ -20,8 +20,9 @@ updated = updated.replace(/alert\((['"])Document analysis endpoint is ready\. Co
 updated = updated.replace(/alert\((['"])Document analysis endpoint is ready\. Connect the live backend to analyze this tender PDF\.\1/g, 'window.__showStaticAnalysis()');
 
 await mkdir(".pages/data", { recursive: true });
-const apiBaseUrl = process.env.TENDER_API_BASE_URL || "https://tender-intelligence-saas-mrul.vercel.app";
-await writeFile(".pages/data/runtime-config.json", JSON.stringify({ apiBaseUrl }));
+const configuredApiBaseUrl = process.env.TENDER_API_BASE_URL || "https://tender-intelligence-saas-mrul.vercel.app";
+const apiBaseUrls = [...new Set([configuredApiBaseUrl, "https://tender-intelligence-saas-mrul.vercel.app", "https://tender-intelligence-saas.vercel.app"].filter(Boolean))];
+await writeFile(".pages/data/runtime-config.json", JSON.stringify({ apiBaseUrl: apiBaseUrls[0] || "", apiBaseUrls }));
 updated = updated.replace("</body>", '<script src="./runtime.js?v=3"></script><script src="./navigation.js?v=1"></script><script src="./account.js?v=1"></script></body>');
 await writeFile(path, updated);
-console.log("Prepared GitHub Pages dashboard with static tender feed, source filtering, API runtime configuration, navigation and business billing UI.");
+console.log("Prepared GitHub Pages dashboard with resilient backend API discovery, static tender feed, source filtering, navigation and business billing UI.");
