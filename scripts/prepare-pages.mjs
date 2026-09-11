@@ -22,6 +22,6 @@ updated = updated.replace(/alert\((['"])Document analysis endpoint is ready\. Co
 await mkdir(".pages/data", { recursive: true });
 const apiBaseUrl = process.env.TENDER_API_BASE_URL || "https://tender-intelligence-saas-mrul.vercel.app";
 await writeFile(".pages/data/runtime-config.json", JSON.stringify({ apiBaseUrl }));
-updated = updated.replace("</body>", '<script src="./runtime.js?v=3"></script><script src="./navigation.js?v=1"></script></body>');
+updated = updated.replace("</body>", '<script src="./runtime.js?v=3"></script><script src="./navigation.js?v=1"></script><script src="./account.js?v=1"></script></body>');
 await writeFile(path, updated);
-console.log("Prepared GitHub Pages dashboard with static tender feed, source filtering, API runtime configuration and standalone navigation.");
+console.log("Prepared GitHub Pages dashboard with static tender feed, source filtering, API runtime configuration, navigation and business billing UI.");
