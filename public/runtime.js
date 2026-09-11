@@ -2,156 +2,20 @@
   "use strict";
   let apiBase = "";
   let runtimeTenders = [];
-
-  const esc = (value) => String(value ?? "").replace(/[&<>\"]/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;"
-  }[c]));
+  const esc = (value) => String(value ?? "").replace(/[&<>\"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
   const modal = () => document.querySelector("#staticAnalysisModal");
   const titleEl = () => document.querySelector("#staticAnalysisTitle");
   const bodyEl = () => document.querySelector("#staticAnalysisBody");
-
-  function show(title, html) {
-    const m = modal();
-    if (!m || !titleEl() || !bodyEl()) return;
-    titleEl().textContent = title || "Tender Analysis";
-    bodyEl().innerHTML = html;
-    m.style.display = "flex";
-  }
-
-  function message(title, text) {
-    show(title, '<div class="staticAnalysisWarn">' + esc(text) + '</div>');
-  }
-
-  async function loadConfig() {
-    try {
-      const r = await fetch("./data/runtime-config.json?ts=" + Date.now(), { cache: "no-store" });
-      if (r.ok) apiBase = (await r.json()).apiBaseUrl || "";
-    } catch (_) {}
-    try {
-      const r = await fetch("./data/tenders.json?ts=" + Date.now(), { cache: "no-store" });
-      if (r.ok) runtimeTenders = (await r.json()).tenders || [];
-    } catch (_) {}
-  }
-
-  async function authenticate() {
-    const saved = localStorage.getItem("ti_access_token");
-    if (saved) return saved;
-    const email = window.prompt("Tender Intelligence login email:");
-    if (!email) return null;
-    const password = window.prompt("Tender Intelligence password:");
-    if (!password) return null;
-    const call = async (path) => {
-      const r = await fetch(apiBase + path, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password })
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.error || ("Authentication failed (HTTP " + r.status + ")"));
-      return d;
-    };
-    try {
-      const d = await call("/api/auth-signin");
-      localStorage.setItem("ti_access_token", d.session.access_token);
-      return d.session.access_token;
-    } catch (error) {
-      if (!window.confirm("Sign-in failed. Create a new Tender Intelligence account with this email?")) throw error;
-      const d = await call("/api/auth-signup");
-      if (!d.session || !d.session.access_token) throw new Error("Account created. Confirm your email if email confirmation is enabled, then sign in again.");
-      localStorage.setItem("ti_access_token", d.session.access_token);
-      return d.session.access_token;
-    }
-  }
-
-  function tenderForButton(button) {
-    const card = button.closest(".tender");
-    const title = card && card.querySelector(".tTitle") ? card.querySelector(".tTitle").textContent.trim() : "";
-    return runtimeTenders.find((t) => t.title === title) || null;
-  }
-
-  function renderAnalysis(result) {
-    const analysis = result.analysis || {};
-    const eligibility = analysis.eligibility || {};
-    const evidence = (analysis.evidence || []).map((x) =>
-      '<li><b>' + esc(x.requirement) + ':</b> ' + esc(x.value) + ' <span style="color:#667085">(' + Math.round((x.confidence || 0) * 100) + '%)</span></li>'
-    ).join("") || "<li>No standard evidence was confidently extracted.</li>";
-    const warnings = (analysis.warnings || []).map((x) => "<li>" + esc(x) + "</li>").join("");
-    const warningBlock = warnings ? '<div class="staticAnalysisSection"><h3>Warnings</h3><ul>' + warnings + "</ul></div>" : "";
-    const fields = '<div class="staticAnalysisSection"><h3>Extracted fields</h3><ul>' +
-      "<li>Turnover: " + esc(eligibility.turnover || "Not found") + "</li>" +
-      "<li>Experience: " + esc(eligibility.experience || "Not found") + "</li>" +
-      "<li>EMD: " + esc(eligibility.emd || "Not found") + "</li>" +
-      "<li>Deadline: " + esc(eligibility.deadline || "Not found") + "</li>" +
-      "<li>Certifications: " + esc((eligibility.certifications || []).join(", ") || "Not found") + "</li></ul></div>";
-    show(result.title || "Tender Analysis",
-      '<div class="staticAnalysisSection"><h3>Eligibility evidence</h3><ul>' + evidence + "</ul></div>" +
-      fields + warningBlock +
-      '<div class="staticAnalysisSection"><div class="staticAnalysisWarn">' + esc(analysis.disclaimer || "Verify every requirement against the original tender document.") + "</div></div>"
-    );
-  }
-
-  async function analyzeTender(button, event) {
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-    const tender = tenderForButton(button);
-    if (!tender) return message("Tender Analysis", "The selected tender could not be identified. Refresh the dashboard and try again.");
-    if (!apiBase) return message("Backend not configured", "The live analysis backend is not configured.");
-    show(tender.title, '<div class="loading">Signing in and analyzing the tender document securely…</div>');
-    try {
-      const token = await authenticate();
-      if (!token) return message(tender.title, "Login is required before document analysis.");
-      const r = await fetch(apiBase + "/api/analyze-tender", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: "Bearer " + token },
-        body: JSON.stringify({ tenderId: tender.id, title: tender.title, documentUrl: tender.documentUrl || undefined, sourceUrl: tender.sourceUrl || undefined })
-      });
-      const d = await r.json().catch(() => ({}));
-      if (r.status === 401) {
-        localStorage.removeItem("ti_access_token");
-        return message(tender.title, "Your session expired. Click Analyze Tender again to sign in.");
-      }
-      if (!r.ok) return message(tender.title, d.error || ("Analysis failed (HTTP " + r.status + ")."));
-      const history = JSON.parse(localStorage.getItem("ti_analysis_history") || "[]");
-      history.unshift({ title: tender.title, at: new Date().toLocaleString("en-IN") });
-      localStorage.setItem("ti_analysis_history", JSON.stringify(history.slice(0, 30)));
-      renderAnalysis(d);
-    } catch (error) {
-      message(tender.title, error instanceof Error ? error.message : "Network error while contacting the analysis backend.");
-    }
-  }
-
-  function refreshSourceStatus() {
-    fetch("./data/tenders.json?ts=" + Date.now(), { cache: "no-store" })
-      .then((r) => r.ok ? r.json() : null)
-      .then((snapshot) => {
-        if (!snapshot) return;
-        const old = document.querySelector("#sourceStatus");
-        if (old) old.remove();
-        const statuses = (snapshot.sourceStatus || []).map((x) =>
-          '<span title="' + esc(x.error || x.status) + '" style="display:inline-flex;align-items:center;gap:5px;margin:3px 7px 3px 0;padding:5px 8px;border:1px solid #e5e9f0;border-radius:999px;font-size:10px;background:#fff"><b style="color:' + (x.status === "ok" ? "#0a8f55" : "#b26a00") + '">' + (x.status === "ok" ? "●" : "○") + "</b>" + esc(x.source) + (x.count ? " (" + x.count + ")" : "") + "</span>"
-        ).join("");
-        const node = document.createElement("div");
-        node.id = "sourceStatus";
-        node.style.cssText = "margin:0 0 14px;padding:11px 13px;background:#fff;border:1px solid #e5e9f0;border-radius:11px;box-shadow:0 4px 18px rgba(16,24,40,.04)";
-        node.innerHTML = '<div style="font-size:11px;font-weight:800;margin-bottom:5px">Live source status · ' + esc(snapshot.status || "unknown") + " · " + esc(snapshot.count || 0) + " tenders</div>" + (statuses || '<span style="font-size:10px;color:#667085">No source results in this snapshot.</span>');
-        const c = document.querySelector(".content");
-        if (c) c.prepend(node);
-      })
-      .catch(() => {});
-  }
-
-  window.__tiRefreshSourceStatus = refreshSourceStatus;
-  document.addEventListener("click", (event) => {
-    const button = event.target && event.target.closest ? event.target.closest("button") : null;
-    if (!button || !/analyze tender/i.test(button.textContent || "")) return;
-    analyzeTender(button, event);
-  }, true);
-
-  const boot = async () => {
-    await loadConfig();
-    refreshSourceStatus();
-  };
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
-  else boot();
+  function show(title, html) { const m=modal(); if(!m||!titleEl()||!bodyEl())return; titleEl().textContent=title||"Tender Analysis"; bodyEl().innerHTML=html; m.style.display="flex"; }
+  function message(title,text){show(title,'<div class="staticAnalysisWarn">'+esc(text)+"</div>");}
+  function upgradeMessage(title,text){show(title,'<div class="staticAnalysisWarn">'+esc(text)+"</div><div style=\"margin-top:12px\"><button id=\"tiAnalysisUpgrade\" class=\"primary\" style=\"border:0;border-radius:8px;padding:9px 13px;background:#1769e8;color:#fff;font-weight:800;cursor:pointer\">Upgrade to Pro</button></div>");const b=document.querySelector("#tiAnalysisUpgrade");if(b)b.onclick=()=>window.__tiStartCheckout?window.__tiStartCheckout():message(title,"Open the account panel to upgrade your plan.");}
+  async function loadConfig(){try{const r=await fetch("./data/runtime-config.json?ts="+Date.now(),{cache:"no-store"});if(r.ok)apiBase=(await r.json()).apiBaseUrl||"";}catch(_){}try{const r=await fetch("./data/tenders.json?ts="+Date.now(),{cache:"no-store"});if(r.ok)runtimeTenders=(await r.json()).tenders||[];}catch(_){}}
+  async function authenticate(){const saved=localStorage.getItem("ti_access_token");if(saved)return saved;const email=window.prompt("Tender Intelligence login email:");if(!email)return null;const password=window.prompt("Tender Intelligence password:");if(!password)return null;const call=async(path)=>{const r=await fetch(apiBase+path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email,password})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||("Authentication failed (HTTP "+r.status+")"));return d;};try{const d=await call("/api/auth-signin");localStorage.setItem("ti_access_token",d.session.access_token);return d.session.access_token;}catch(error){if(!window.confirm("Sign-in failed. Create a new Tender Intelligence account with this email?"))throw error;const d=await call("/api/auth-signup");if(!d.session||!d.session.access_token)throw new Error("Account created. Confirm your email if email confirmation is enabled, then sign in again.");localStorage.setItem("ti_access_token",d.session.access_token);return d.session.access_token;}}
+  function tenderForButton(button){const card=button.closest(".tender");const title=card&&card.querySelector(".tTitle")?card.querySelector(".tTitle").textContent.trim():"";return runtimeTenders.find((t)=>t.title===title)||null;}
+  function renderAnalysis(result){const analysis=result.analysis||{};const eligibility=analysis.eligibility||{};const evidence=(analysis.evidence||[]).map((x)=>'<li><b>'+esc(x.requirement)+":</b> "+esc(x.value)+" <span style=\"color:#667085\">("+Math.round((x.confidence||0)*100)+"%)</span></li>").join("")||"<li>No standard evidence was confidently extracted.</li>";const warnings=(analysis.warnings||[]).map((x)=>"<li>"+esc(x)+"</li>").join("");const warningBlock=warnings?'<div class="staticAnalysisSection"><h3>Warnings</h3><ul>'+warnings+"</ul></div>":"";const fields='<div class="staticAnalysisSection"><h3>Extracted fields</h3><ul>'+"<li>Turnover: "+esc(eligibility.turnover||"Not found")+"</li>"+"<li>Experience: "+esc(eligibility.experience||"Not found")+"</li>"+"<li>EMD: "+esc(eligibility.emd||"Not found")+"</li>"+"<li>Deadline: "+esc(eligibility.deadline||"Not found")+"</li>"+"<li>Certifications: "+esc((eligibility.certifications||[]).join(", ")||"Not found")+"</li></ul></div>";show(result.title||"Tender Analysis",'<div class="staticAnalysisSection"><h3>Eligibility evidence</h3><ul>'+evidence+"</ul></div>"+fields+warningBlock+'<div class="staticAnalysisSection"><div class="staticAnalysisWarn">'+esc(analysis.disclaimer||"Verify every requirement against the original tender document.")+"</div></div>");}
+  async function analyzeTender(button,event){event.preventDefault();event.stopPropagation();event.stopImmediatePropagation();const tender=tenderForButton(button);if(!tender)return message("Tender Analysis","The selected tender could not be identified. Refresh the dashboard and try again.");if(!apiBase)return message("Backend not configured","The live analysis backend is not configured.");show(tender.title,'<div class="loading">Signing in and analyzing the tender document securely…</div>');try{const token=await authenticate();if(!token)return message(tender.title,"Login is required before document analysis.");const r=await fetch(apiBase+"/api/analyze-tender",{method:"POST",headers:{"content-type":"application/json",authorization:"Bearer "+token},body:JSON.stringify({tenderId:tender.id,title:tender.title,documentUrl:tender.documentUrl||undefined,sourceUrl:tender.sourceUrl||undefined})});const d=await r.json().catch(()=>({}));if(r.status===401){localStorage.removeItem("ti_access_token");return message(tender.title,"Your session expired. Click Analyze Tender again to sign in.");}if(r.status===402||d.code==="TRIAL_EXPIRED")return upgradeMessage(tender.title,d.error||"Your free trial has ended. Upgrade to continue using document intelligence.");if(!r.ok)return message(tender.title,d.error||("Analysis failed (HTTP "+r.status+")."));const history=JSON.parse(localStorage.getItem("ti_analysis_history")||"[]");history.unshift({title:tender.title,at:new Date().toLocaleString("en-IN")});localStorage.setItem("ti_analysis_history",JSON.stringify(history.slice(0,30)));renderAnalysis(d);}catch(error){message(tender.title,error instanceof Error?error.message:"Network error while contacting the analysis backend.");}}
+  function refreshSourceStatus(){fetch("./data/tenders.json?ts="+Date.now(),{cache:"no-store"}).then((r)=>r.ok?r.json():null).then((snapshot)=>{if(!snapshot)return;const old=document.querySelector("#sourceStatus");if(old)old.remove();const statuses=(snapshot.sourceStatus||[]).map((x)=>'<span title="'+esc(x.error||x.status)+'" style="display:inline-flex;align-items:center;gap:5px;margin:3px 7px 3px 0;padding:5px 8px;border:1px solid #e5e9f0;border-radius:999px;font-size:10px;background:#fff"><b style="color:'+(x.status==="ok"?"#0a8f55":"#b26a00")+'">'+(x.status==="ok"?"●":"○")+"</b>"+esc(x.source)+(x.count?" ("+x.count+")":"")+"</span>").join("");const node=document.createElement("div");node.id="sourceStatus";node.style.cssText="margin:0 0 14px;padding:11px 13px;background:#fff;border:1px solid #e5e9f0;border-radius:11px;box-shadow:0 4px 18px rgba(16,24,40,.04)";node.innerHTML='<div style="font-size:11px;font-weight:800;margin-bottom:5px">Live source status · '+esc(snapshot.status||"unknown")+" · "+esc(snapshot.count||0)+" tenders</div>"+(statuses||'<span style="font-size:10px;color:#667085">No source results in this snapshot.</span>');const c=document.querySelector(".content");if(c)c.prepend(node);}).catch(()=>{});}
+  window.__tiRefreshSourceStatus=refreshSourceStatus;
+  document.addEventListener("click",(event)=>{const button=event.target&&event.target.closest?event.target.closest("button"):null;if(!button||!/analyze tender/i.test(button.textContent||""))return;analyzeTender(button,event);},true);
+  const boot=async()=>{await loadConfig();refreshSourceStatus();};if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot,{once:true});else boot();
 })();
