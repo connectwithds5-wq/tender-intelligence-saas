@@ -25,4 +25,5 @@ jobs:
       - run: npm run build
       - run: node --check public/runtime.js
       - run: node --check public/navigation.js
+      - run: node --check public/account.js
       - run: node --check scripts/prepare-pages.mjs
