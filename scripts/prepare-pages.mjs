@@ -20,10 +20,8 @@ updated = updated.replace(/alert\((['"])Document analysis endpoint is ready\. Co
 updated = updated.replace(/alert\((['"])Document analysis endpoint is ready\. Connect the live backend to analyze this tender PDF\.\1/g, 'window.__showStaticAnalysis()');
 
 await mkdir(".pages/data", { recursive: true });
-// The Vercel production URL is public and is the stable backend target for the Pages dashboard.
-// Keep TENDER_API_BASE_URL as an override for future custom domains or alternate deployments.
 const apiBaseUrl = process.env.TENDER_API_BASE_URL || "https://tender-intelligence-saas-mrul.vercel.app";
 await writeFile(".pages/data/runtime-config.json", JSON.stringify({ apiBaseUrl }));
-updated = updated.replace("</body>", '<script src="./runtime.js"></script></body>');
+updated = updated.replace("</body>", '<script src="./runtime.js?v=3"></script><script src="./navigation.js?v=1"></script></body>');
 await writeFile(path, updated);
-console.log("Prepared GitHub Pages dashboard with static tender feed, source filtering and API runtime configuration.\n");
+console.log("Prepared GitHub Pages dashboard with static tender feed, source filtering, API runtime configuration and standalone navigation.");
