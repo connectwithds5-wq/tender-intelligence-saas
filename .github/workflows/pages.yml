@@ -47,6 +47,12 @@ jobs:
         env:
           TENDER_API_BASE_URL: ${{ secrets.TENDER_API_BASE_URL }}
 
+      - name: Bust dashboard asset cache
+        run: |
+          sed -i "s/runtime.js?v=3/runtime.js?v=${GITHUB_SHA}/g; s/navigation.js?v=1/navigation.js?v=${GITHUB_SHA}/g" .pages/index.html
+          node --check .pages/runtime.js
+          node --check .pages/navigation.js
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
